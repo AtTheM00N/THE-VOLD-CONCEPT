@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import { Brand, Bolt, Arrow } from './components/Brand'
 import { products, regions, faqs } from './data'
 import { useExperience, useReducedMotion } from './useExperience'
 
-import Rulebreaker from './components/Rulebreaker'
+import ScrollFilm from './film/ScrollFilm'
+const Rulebreaker = lazy(() => import('./components/Rulebreaker'))
 const image = (name: string) => `/images/${name}.webp`
 const mail = 'info@voldenergy.in'
 const whatsapp = 'https://wa.me/918010865535'
@@ -21,6 +22,7 @@ export default function App() {
   const [emailStatus, setEmailStatus] = useState('')
   const reduced = useReducedMotion()
   const product = products[selected]
+  const legacy = window.location.pathname === '/rulebreaker'
   useExperience(root, reduced)
 
   useEffect(() => {
@@ -39,13 +41,15 @@ export default function App() {
     setEmailStatus('Your email draft is ready to open. Send it from your email app, or contact info@voldenergy.in directly.')
   }
 
-  return <main ref={root} style={{ '--accent': product.color } as CSSProperties}>
-    <a className="skip-link" href="#range">Skip to the range</a>
-    <header className="site-header">
+  const navigation = <header className={`site-header${legacy ? '' : ' commerce-header'}`}>
       <a href="#top" aria-label="VOLD home"><Brand /></a>
       <nav className="desktop-nav" aria-label="Main navigation"><a href="#range">The range</a><a href="#story">Our story</a><a href="#find">Find VOLD</a></nav>
       <div className="header-actions"><a className="button button-small button-white" href="#contact">Stock VOLD <Arrow diagonal /></a><button className="menu-trigger" onClick={openMenu} aria-label="Open navigation" aria-haspopup="dialog" aria-expanded={menuOpen}><span /><span /></button></div>
     </header>
+
+  return <main ref={root} className={legacy ? 'legacy-site' : 'film-site'} style={{ '--accent': product.color } as CSSProperties}>
+    <a className="skip-link" href="#range">Skip to the range</a>
+    {legacy && navigation}
 
     <dialog className="menu-dialog" ref={menu} onClose={() => setMenuOpen(false)} aria-label="Site navigation" data-lenis-prevent>
       <div className="menu-head"><Brand /><button className="close-button" onClick={closeMenu} aria-label="Close navigation">×</button></div>
@@ -53,10 +57,11 @@ export default function App() {
       <p className="mono">Born in India. Made to stand out.</p>
     </dialog>
 
-    <Rulebreaker key={reduced ? 'calm' : 'full'} reduced={reduced} />
+    {legacy ? <Suspense fallback={<div className="film-stage" />}><Rulebreaker key={reduced ? 'calm' : 'full'} reduced={reduced} /></Suspense> : <ScrollFilm reduced={reduced} />}
+    {!legacy && navigation}
 
     <section id="range" className="new-range section-pad" aria-labelledby="range-heading">
-      <div className="section-top"><span className="eyebrow">03 / THE ACTUAL BAD INFLUENCE</span><span className="mono">THE MESS WAS VIRTUAL. THE DRINKS ARE REAL.</span></div>
+      <div className="section-top"><span className="eyebrow">THE VOLD COLLECTION</span><span className="mono">FOUR PERSONALITIES. ONE ATTITUDE.</span></div>
       <div className="section-heading" data-reveal><h2 id="range-heading">GOOD TASTE.<br /><span className="outline-text">BAD INFLUENCE.</span></h2><p className="body-copy">Four personalities. All a little VOLD.<br />Pick the one that feels like you.</p></div>
       <div className="drink-lineup">{products.map((item, i) => <button key={item.id} className="drink-card" onClick={() => { setSelected(i); detail.current?.showModal() }} style={{ '--drink': item.color } as CSSProperties} aria-label={`Discover ${item.name}`}><span className="drink-top mono"><span>0{i + 1}</span><span>{item.category}</span><Arrow diagonal /></span><span className="drink-slogan" aria-hidden="true">{[['STAY', 'LOUD.'], ['BITE', 'BACK.'], ['FEEL', 'THE HEAT.'], ['MIX', 'IT UP.']][i].map((line, index) => <span key={index}>{line}</span>)}</span><img src={image(item.image)} alt={`VOLD ${item.name} 250 ml can`} loading="lazy" width="180" height="420" /><span className="drink-name"><strong>{item.name}</strong><span className="mono">250 ML / {i < 2 ? 'ENERGY' : 'MIXER'} <span>+</span></span></span></button>)}</div>
       <div className="range-footnote mono"><span>INDEPENDENT ENERGY. BORN IN INDIA.</span><a href="#find">FIND YOUR NEXT VOLD <Arrow /></a></div>

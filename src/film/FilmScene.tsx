@@ -9,7 +9,7 @@ import { products } from '../data'
 import { cameraAt, productAt, smooth, windowed } from './timeline'
 import type { FilmSignal } from './timeline'
 
-type Props = { signal: RefObject<FilmSignal>; reduced: boolean; onReady: () => void }
+type Props = { signal: RefObject<FilmSignal>; onReady: () => void; onUnavailable: () => void }
 const metal = { color: '#bec3c8', metalness: 1, roughness: .2 }
 
 function makeLabel(index: number) {
@@ -85,6 +85,9 @@ function Product({ signal }: { signal: RefObject<FilmSignal> }) {
     const p = signal.current.progress, index = productAt(p)
     if (coating.current && previous.current !== index) { coating.current.map = textures[index]; coating.current.needsUpdate = true; previous.current = index }
     if (!ref.current) return
+    // A brief unlit sleeve hides the ink change while each world passes the lens.
+    const crossing = [.63, .714, .797, .883].reduce((value, at) => Math.max(value, windowed(at - .009, at - .002, at + .002, at + .009, p)), 0)
+    coating.current?.color.setScalar(1 - crossing * .95)
     const reveal = smooth(.48, .54, p)
     ref.current.rotation.y = Math.atan2(camera.position.x, camera.position.z) * reveal + .1 * Math.sin(p * 9) * reveal
     ref.current.rotation.z = windowed(.455, .5, .55, .62, p) * -.065
@@ -125,11 +128,6 @@ function Chamber({ signal }: { signal: RefObject<FilmSignal> }) {
   const rings = useRef<Group>(null), fins = useRef<Group>(null), warm = useRef<Group>(null), glass = useRef<Group>(null), shutters = useRef<Group>(null), ribbon = useRef<Mesh>(null), fluid = useRef<ShaderMaterial>(null)
   const left = useMemo(() => shutterShape(-1), []), right = useMemo(() => shutterShape(1), [])
   const seamMaterial = useRef<MeshBasicMaterial>(null)
-  const seam = useMemo(() => {
-    const s = new Shape(); s.moveTo(seamEdge[0][0] - .065, seamEdge[0][1])
-    seamEdge.slice(1).forEach(([x, y]) => s.lineTo(x - .065, y))
-    seamEdge.toReversed().forEach(([x, y]) => s.lineTo(x + .065, y)); s.closePath(); return s
-  }, [])
   const liquid = useMemo(() => ({ uProgress: { value: 0 }, uColor: { value: new Color('#ff3131') } }), [])
   const colors = useMemo(() => products.map(p => new Color(p.color)), [])
   useEffect(() => () => { left.dispose(); right.dispose() }, [left, right])
@@ -143,12 +141,13 @@ function Chamber({ signal }: { signal: RefObject<FilmSignal> }) {
     if (shutters.current) {
       shutters.current.visible = p > .30 && p < .61
       shutters.current.position.z = -3 + smooth(.30, .365, p) * 4.1
-      shutters.current.children.slice(0, 2).forEach((panel, i) => { const side = i ? 1 : -1; panel.position.x = side * (.052 + release * 5.6); panel.rotation.y = side * release * .45 })
-      if (seamMaterial.current) seamMaterial.current.opacity = (1 - release) * smooth(.345, .38, p)
+      shutters.current.children.slice(0, 2).forEach((panel, i) => { const side = i ? 1 : -1; panel.position.x = side * (.052 + release * 5.6); panel.position.y = -side * .055 * (1 - release); panel.rotation.y = side * release * .45 })
+      if (seamMaterial.current) seamMaterial.current.opacity = (1 - smooth(.466, .486, p)) * smooth(.345, .38, p)
     }
     if (fins.current) {
       const weight = windowed(.605, .635, .704, .734, p); fins.current.visible = weight > .001
-      fins.current.children.forEach((fin, i) => { const a = i / 14 * Math.PI * 2; fin.position.set(Math.sin(a) * (2.5 + (1 - weight) * 8), .15, Math.cos(a) * (2.5 + (1 - weight) * 8)); fin.rotation.y = -a + p * 5; fin.rotation.z = Math.sin(i) * .12 })
+      const opening = windowed(.632, .656, .693, .717, p)
+      fins.current.children.forEach((fin, i) => { const a = i / 14 * Math.PI * 2; fin.position.set(Math.sin(a) * (2.5 + (1 - weight) * 8), .15, Math.cos(a) * (2.5 + (1 - weight) * 8)); if (Math.cos(a) > 0) fin.position.x += (Math.sin(a) >= 0 ? 1 : -1) * opening * 2.1; fin.rotation.y = -a + p * 5; fin.rotation.z = Math.sin(i) * .12 })
     }
     if (warm.current) {
       const weight = windowed(.696, .727, .784, .81, p); warm.current.visible = weight > .001
@@ -169,7 +168,7 @@ function Chamber({ signal }: { signal: RefObject<FilmSignal> }) {
   })
   return <>
     <group ref={rings}>{Array.from({ length: 6 }, (_, i) => <mesh key={i} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[2.15 + i * .17, .07, 6, 64]} /><meshStandardMaterial color="#272a30" metalness={.95} roughness={.24} /></mesh>)}</group>
-    <group ref={shutters}><mesh geometry={left}><meshStandardMaterial color="#15181e" metalness={.85} roughness={.28} /></mesh><mesh geometry={right}><meshStandardMaterial color="#15181e" metalness={.85} roughness={.28} /></mesh><mesh position={[0, 0, -.025]}><shapeGeometry args={[seam]} /><meshBasicMaterial ref={seamMaterial} color="#ff4538" transparent toneMapped={false} /></mesh></group>
+    <group ref={shutters}><mesh geometry={left}><meshStandardMaterial color="#15181e" metalness={.85} roughness={.28} /></mesh><mesh geometry={right}><meshStandardMaterial color="#15181e" metalness={.85} roughness={.28} /></mesh><mesh position={[0, 0, -.025]}><planeGeometry args={[1.4, 8]} /><meshBasicMaterial ref={seamMaterial} color="#ff4538" transparent toneMapped={false} /></mesh></group>
     <group ref={fins}>{Array.from({ length: 14 }, (_, i) => <group key={i}><mesh><boxGeometry args={[.12, 4.8, 1.1]} /><meshStandardMaterial color="#121816" metalness={.85} roughness={.15} /></mesh><mesh position={[.066, 0, .5]}><boxGeometry args={[.008, 4.7, .018]} /><meshBasicMaterial color="#39ff14" /></mesh></group>)}</group>
     <group ref={warm}>{[0, 1, 2].map(i => <mesh key={i} rotation={[.4, 0, 0]}><torusGeometry args={[1.9 + i * .43, .105, 8, 96, Math.PI * 1.65]} /><meshStandardMaterial color="#be7130" metalness={.94} roughness={.14} /></mesh>)}</group>
     <group ref={glass}>{Array.from({ length: 7 }, (_, i) => <group key={i}><mesh><boxGeometry args={[.05, 5, 1.8]} /><meshPhysicalMaterial color="#56828a" metalness={.4} roughness={.06} transparent opacity={.3} depthWrite={false} clearcoat={1} /></mesh><mesh position={[.03, 0, .89]}><boxGeometry args={[.008, 5, .014]} /><meshBasicMaterial color="#88eaff" /></mesh></group>)}</group>
@@ -181,7 +180,7 @@ function Stage(props: Props) {
   const { size, invalidate } = useThree()
   const { signal, onReady } = props
   const key = useRef<DirectionalLight>(null), rim = useRef<DirectionalLight>(null), red = useRef<SpotLight>(null)
-  const focal = useMemo(() => new Vector3(), []), colors = useMemo(() => products.map(p => new Color(p.color)), [])
+  const focal = useMemo(() => new Vector3(), []), rightward = useMemo(() => new Vector3(), []), colors = useMemo(() => products.map(p => new Color(p.color)), [])
   useEffect(() => {
     let previous = -1
     const tick = () => { if (signal.current.visible && previous !== signal.current.progress) { previous = signal.current.progress; invalidate() } }
@@ -191,14 +190,19 @@ function Stage(props: Props) {
   useFrame(({ camera, gl }) => {
     const p = props.signal.current.progress, frame = cameraAt(p), lens = camera as PerspectiveCamera
     focal.fromArray(frame.target); lens.position.fromArray(frame.position)
-    if (size.width < 760) lens.position.sub(focal).multiplyScalar(1 + smooth(.45, .54, p) * .42).add(focal)
+    if (size.width < 760) {
+      lens.position.sub(focal).multiplyScalar(1 + smooth(.45, .54, p) * .75).add(focal)
+      rightward.set(lens.position.z, 0, -lens.position.x).normalize()
+      const pan = windowed(.49, .56, .86, .9, p) * .5 - smooth(.95, .982, p) * .82
+      lens.position.addScaledVector(rightward, -pan); focal.addScaledVector(rightward, -pan)
+    }
     lens.fov = frame.fov; lens.lookAt(focal); lens.updateProjectionMatrix()
     const reveal = smooth(.475, .545, p), discover = smooth(0, .105, p), quiet = smooth(.87, .97, p)
     gl.toneMappingExposure = .25 + discover * .75
     if (key.current) key.current.intensity = (.035 + discover * .85 + reveal * 2.1) * (1 - quiet * .18)
     if (rim.current) { rim.current.color.copy(colors[productAt(p)]); rim.current.intensity = .15 + discover * .65 + reveal * 1.2 }
     if (red.current) { red.current.intensity = 8 + windowed(.32, .452, .49, .53, p) * 75; red.current.color.copy(colors[productAt(p)]) }
-  })
+  }, -1)
   return <>
     <color attach="background" args={['#000000']} /><fog attach="fog" args={['#000000', 8, 24]} />
     <ambientLight intensity={.025} />
@@ -216,14 +220,15 @@ function Stage(props: Props) {
   </>
 }
 
-function Fallback() {
-  return <div className="film-fallback"><img src="/images/can_classic.webp" alt="VOLD Classic energy drink" /><p>Your browser is showing the still edition.</p><a href="#range">Explore the drinks →</a></div>
+function Unavailable({ notify }: { notify: () => void }) {
+  useEffect(notify, [notify])
+  return null
 }
-class FilmBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+class FilmBoundary extends Component<{ children: ReactNode; onUnavailable: () => void }, { failed: boolean }> {
   state = { failed: false }
   static getDerivedStateFromError() { return { failed: true } }
-  render() { return this.state.failed ? <Fallback /> : this.props.children }
+  render() { return this.state.failed ? <Unavailable notify={this.props.onUnavailable} /> : this.props.children }
 }
 export default function FilmScene(props: Props) {
-  return <FilmBoundary><Canvas className="cinema-canvas" dpr={[1, 1.5]} gl={{ antialias: false, alpha: false, powerPreference: 'high-performance' }} camera={{ position: [.1, 1.47, .92], fov: 29, near: .025, far: 60 }} frameloop="demand" shadows={false} fallback={<Fallback />} aria-hidden="true"><Suspense fallback={null}><Stage {...props} /></Suspense></Canvas></FilmBoundary>
+  return <FilmBoundary onUnavailable={props.onUnavailable}><Canvas className="cinema-canvas" dpr={[1, 1.5]} gl={{ antialias: false, alpha: false, powerPreference: 'high-performance' }} camera={{ position: [.1, 1.47, .92], fov: 29, near: .025, far: 60 }} frameloop="demand" shadows={false} fallback={<span>This browser cannot display the film.</span>} aria-hidden="true"><Suspense fallback={null}><Stage {...props} /></Suspense></Canvas></FilmBoundary>
 }

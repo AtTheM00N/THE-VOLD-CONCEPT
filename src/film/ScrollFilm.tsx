@@ -1,4 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Component, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import gsap from 'gsap'
 import { Brand, Arrow } from '../components/Brand'
 import { products } from '../data'
@@ -12,6 +13,13 @@ const FilmScene = lazy(() => import('./FilmScene'))
 const duration = 74
 const timestamp = (progress: number) => { const s = Math.round(progress * duration); return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}` }
 
+class SceneLoaderBoundary extends Component<{ children: ReactNode; onUnavailable: () => void }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() { return { failed: true } }
+  componentDidCatch() { this.props.onUnavailable() }
+  render() { return this.state.failed ? null : this.props.children }
+}
+
 export default function ScrollFilm({ reduced }: { reduced: boolean }) {
   const track = useRef<HTMLElement>(null), stage = useRef<HTMLDivElement>(null)
   const slider = useRef<HTMLInputElement>(null), time = useRef<HTMLOutputElement>(null)
@@ -19,10 +27,20 @@ export default function ScrollFilm({ reduced }: { reduced: boolean }) {
   const sound = useRef<FilmSound | null>(null), playing = useRef(false)
   const bounds = useRef({ top: 0, distance: 1 })
   const [loaded, setLoaded] = useState(false), [fonts, setFonts] = useState(false)
+  const [unavailable, setUnavailable] = useState(false)
+  const [stillFrames, setStillFrames] = useState(false)
+  const calm = reduced || stillFrames, calmRef = useRef(calm)
   const [chapter, setChapter] = useState(0), [flavour, setFlavour] = useState(0)
   const [audioOn, setAudioOn] = useState(false), [audioFailed, setAudioFailed] = useState(false), [isPlaying, setIsPlaying] = useState(false)
   const onReady = useCallback(() => setLoaded(true), [])
   const pause = useCallback(() => { playing.current = false; setIsPlaying(false) }, [])
+  const onUnavailable = useCallback(() => { setUnavailable(true); pause() }, [pause])
+  useLayoutEffect(() => {
+    calmRef.current = calm
+    // The preference change must also stop the external GSAP playback clock.
+    // oxlint-disable-next-line react/set-state-in-effect
+    pause()
+  }, [calm, pause])
   const seek = useCallback((progress: number) => {
     pause(); seekPage(bounds.current.top + clamp01(progress) * bounds.current.distance)
   }, [pause])
@@ -42,7 +60,7 @@ export default function ScrollFilm({ reduced }: { reduced: boolean }) {
       bounds.current = { top: rect.top + window.scrollY, distance: Math.max(1, rect.height - window.innerHeight) }
     }
     const visibility = () => { signal.current.visible = intersecting && !document.hidden; if (document.hidden) pause() }
-    const observer = new IntersectionObserver(entries => { intersecting = entries[0].isIntersecting; visibility() })
+    const observer = new IntersectionObserver(entries => { intersecting = entries[0].isIntersecting; visibility(); if (!intersecting) pause() })
     observer.observe(element)
     const resize = new ResizeObserver(measure); resize.observe(element)
     measure()
@@ -54,7 +72,7 @@ export default function ScrollFilm({ reduced }: { reduced: boolean }) {
         if (p >= 1) pause()
       }
       const shot = shotAt(p), product = productAt(p)
-      const cinematic = reduced ? Math.min(.985, (SHOTS[shot].at + (SHOTS[shot + 1]?.at ?? 1)) / 2) : p
+      const cinematic = calmRef.current ? Math.min(.985, (SHOTS[shot].at + (SHOTS[shot + 1]?.at ?? 1)) / 2) : p
       signal.current.velocity = previous < 0 ? 0 : (p - previous) / Math.max(delta / 1000, .001)
       signal.current.progress = cinematic
       score.update(p, signal.current.velocity, signal.current.visible)
@@ -90,21 +108,22 @@ export default function ScrollFilm({ reduced }: { reduced: boolean }) {
       window.removeEventListener('touchstart', stopOnInput); window.removeEventListener('keydown', stopOnInput)
       document.removeEventListener('visibilitychange', visibility)
     }
-  }, [reduced, pause])
+  }, [pause])
 
   const togglePlay = () => {
     if (playing.current) { pause(); return }
     if (signal.current.progress > .995) seek(0)
     playing.current = true; setIsPlaying(true)
   }
+  const jumpToScene = (index: number) => seek((SHOTS[index].at + (SHOTS[index + 1]?.at ?? 1)) / 2)
   const toggleSound = async () => {
     const wasOn = audioOn, enabled = await sound.current?.toggle() ?? false
     setAudioOn(enabled); setAudioFailed(!wasOn && !enabled)
   }
 
-  return <section id="top" ref={track} className={`film-track${reduced ? ' film-reduced' : ''}`} aria-label="BREACH, an interactive VOLD product film">
+  return <section id="top" ref={track} className={`film-track${calm ? ' film-reduced' : ''}${unavailable ? ' film-unavailable' : ''}`} aria-label="BREACH, an interactive VOLD product film">
     <div className={`film-stage${loaded ? ' is-ready' : ''}`} ref={stage}>
-      <div className="film-image">{fonts && <Suspense fallback={null}><FilmScene signal={signal} reduced={reduced} onReady={onReady} /></Suspense>}</div>
+      <div className="film-image">{unavailable ? <div className="film-fallback"><img src="/images/can_classic.webp" alt="VOLD Classic energy drink" /><h1>STILL VOLD.</h1><p>Your browser is showing the still edition.</p><a href="#range">Explore the drinks →</a></div> : fonts && <SceneLoaderBoundary onUnavailable={onUnavailable}><Suspense fallback={null}><FilmScene signal={signal} onReady={onReady} onUnavailable={onUnavailable} /></Suspense></SceneLoaderBoundary>}</div>
       <div className="film-vignette" aria-hidden="true" />
       <header className="film-header">
         <a href="#top" aria-label="VOLD home" onClick={pause}><Brand /></a>
@@ -116,7 +135,7 @@ export default function ScrollFilm({ reduced }: { reduced: boolean }) {
         <span className="film-kicker">A VOLD ORIGINAL / INTERACTIVE FILM</span>
         <h1>BREACH<span>®</span></h1>
         <p>Everything has a breaking point.</p>
-        <span className="film-instruction">{loaded ? reduced ? 'SCROLL TO EXPLORE THE STILL EDITION' : 'SCROLL TO MOVE THE CAMERA' : 'SETTING THE LIGHT…'} <span aria-hidden="true">↓</span></span>
+        <span className="film-instruction">{loaded ? calm ? 'SCROLL TO EXPLORE THE STILL EDITION' : 'SCROLL TO MOVE THE CAMERA' : 'SETTING THE LIGHT…'} <span aria-hidden="true">↓</span></span>
       </div>
 
       <div className="film-product-copy" aria-hidden={chapter < 6 || chapter > 9}>
@@ -134,10 +153,10 @@ export default function ScrollFilm({ reduced }: { reduced: boolean }) {
       <div className="film-controls" data-lenis-prevent>
         <div className="film-controls-top">
           <span className="film-scene"><span>{String(chapter + 1).padStart(2, '0')}</span> / {SHOTS[chapter].name}</span>
-          <label className="film-chapter-picker"><span className="sr-only">Jump to a scene</span><select aria-label="Jump to a scene" value={chapter} onChange={event => seek(SHOTS[Number(event.target.value)].at + .001)}>{SHOTS.map((shot, i) => <option key={shot.name} value={i}>{String(i + 1).padStart(2, '0')} / {shot.name}</option>)}</select><span aria-hidden="true">SCENES ↗</span></label>
+          <div className="film-control-options"><button className="film-motion" aria-label="Use still frames" aria-pressed={calm} disabled={reduced} onClick={() => setStillFrames(value => !value)}>{calm ? 'STILLS' : 'MOTION'} <span aria-hidden="true">{calm ? '○' : '◉'}</span></button><label className="film-chapter-picker"><span className="sr-only">Jump to a scene</span><select aria-label="Jump to a scene" value={chapter} onChange={event => jumpToScene(Number(event.target.value))}>{SHOTS.map((shot, i) => <option key={shot.name} value={i}>{String(i + 1).padStart(2, '0')} / {shot.name}</option>)}</select><span aria-hidden="true">SCENES ↗</span></label></div>
         </div>
         <div className="film-transport">
-          {!reduced && <button className="film-play" disabled={!loaded} onClick={togglePlay} aria-label={isPlaying ? 'Pause film' : 'Play film'}>{isPlaying ? <span aria-hidden="true">Ⅱ</span> : <span aria-hidden="true">▶</span>}</button>}
+          <button className="film-play" disabled={!loaded || calm} aria-hidden={calm} tabIndex={calm ? -1 : 0} onClick={togglePlay} aria-label={isPlaying ? 'Pause film' : 'Play film'}>{isPlaying ? <span aria-hidden="true">Ⅱ</span> : <span aria-hidden="true">▶</span>}</button>
           <input ref={slider} className="film-seek" type="range" min="0" max="1000" step="1" defaultValue="0" aria-label="Film position" onChange={event => seek(Number(event.target.value) / 1000)} />
           <span className="film-time"><output ref={time}>00:00</output><span> / 01:14</span></span>
         </div>
